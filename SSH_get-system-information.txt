@@ -1,0 +1,243 @@
+ private void button6_Click(object sender, EventArgs e)
+        {
+            // Verificar si los TextBox están vacíos
+            if (textBoxHost.Text == "" || textBoxUser.Text == "" || textBoxPassword.Text == "" || textBoxPort.Text == "")
+            {
+                // Mostrar un mensaje de error
+                MessageBox.Show("Por favor, complete todos los campos.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+
+            int puerto;
+            if (!int.TryParse(textBoxPort.Text, out puerto))
+            {
+                MessageBox.Show("El puerto debe ser un número entero.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+
+            listBox1.Items.Clear();
+            listBox2.Items.Clear();
+            listBox3.Items.Clear();
+            listBox4.Items.Clear();
+            listBox5.Items.Clear();
+            listBox6.Items.Clear();
+            listBox7.Items.Clear();
+
+            
+            // Obtener los valores de los cuadros de texto
+            string host = textBoxHost.Text;
+            string username = textBoxUser.Text;
+            string password = textBoxPassword.Text;
+            int port = int.Parse(textBoxPort.Text);
+
+            // Crear una conexión SSH
+            using (var client = new SshClient(host, port, username, password))
+            {
+                try
+                {
+                    client.Connect();
+
+                    // Ejecutar los comandos para obtener los valores de uso del sistema
+                    var ramCommand = client.RunCommand("free -m | awk 'NR==2{print $3}'");
+                    var diskCommand = client.RunCommand("df -h | awk '$NF==\"/\"{print $2}'");
+                    var freeSpaceCommand = client.RunCommand("df -h | awk '$NF==\"/\"{print $4}'");
+
+                    // Mostrar los resultados en los cuadros de texto
+                    textBox1.Text = freeSpaceCommand.Result.Trim();
+                    textBox2.Text = diskCommand.Result.Trim();
+                    textBox3.Text = ramCommand.Result.Trim();
+
+                    // Obtener el valor de RAM total
+                    var totalRamCommand = client.RunCommand("free -m | awk 'NR==2{print $2}'");
+                    textBox4.Text = totalRamCommand.Result.Trim();
+
+                    // Obtener la IP local
+                    var localIpCommand = client.RunCommand("hostname -I | awk '{print $1}'");
+                    textBox5.Text = localIpCommand.Result.Trim();
+
+                    // Obtener la IP pública
+                    var publicIpCommand = client.RunCommand("curl -s ifconfig.me");
+                    textBox6.Text = publicIpCommand.Result.Trim();
+
+
+                    //
+                    // Ejecutar el comando para obtener la lista de usuarios
+                    var usersCommand = client.RunCommand("cat /etc/passwd | cut -d: -f1");
+
+                    // Dividir la salida en líneas y agregar cada usuario al ListBox
+                    var users = usersCommand.Result.Split('\n');
+                    foreach (var user in users)
+                    {
+                        // Omitir usuarios vacíos o no válidos
+                        if (!string.IsNullOrWhiteSpace(user))
+                        {
+                            listBox1.Items.Add(user);
+                        }
+                    }
+
+                    //
+                    // Obtener información del sistema operativo
+                    var osInfoCommand = client.RunCommand("cat /etc/os-release");
+
+                    // Dividir la salida en líneas
+                    var lines = osInfoCommand.Result.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
+
+                    // Crear un diccionario para almacenar los datos del sistema operativo
+                    var osInfo = new Dictionary<string, string>();
+
+                    // Recorrer cada línea y almacenar los datos en el diccionario
+                    foreach (var line in lines)
+                    {
+                        var parts = line.Split('=');
+                        if (parts.Length == 2)
+                        {
+                            var key = parts[0].Trim();
+                            var value = parts[1].Trim().Trim('"');
+                            osInfo[key] = value;
+                        }
+                    }
+
+                    // Mostrar los datos del sistema operativo en el ListBox
+                    listBox2.Items.Add($"Nombre: {osInfo["NAME"]}");
+                    listBox2.Items.Add($"Versión: {osInfo["VERSION"]}");
+                    listBox2.Items.Add($"ID: {osInfo["ID"]}");
+                    listBox2.Items.Add($"ID de versión: {osInfo["VERSION_ID"]}");
+                    listBox2.Items.Add($"Distribución: {osInfo["PRETTY_NAME"]}");
+                    //Anda
+
+                    // Obtener la lista de procesos
+                    var processCommand = client.RunCommand("ps -ef");
+
+                    // Dividir la salida en líneas
+                    var processLines = processCommand.Result.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
+
+                    // Recorrer cada línea (ignorando la primera línea de encabezado)
+                    for (int i = 1; i < processLines.Length; i++)
+                    {
+                        // Obtener las columnas del proceso
+                        var columns = processLines[i].Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+
+                        // Obtener el ID del proceso y el nombre del proceso
+                        var processId = columns[1];
+                        var processName = columns[7];
+
+                        // Agregar el ID del proceso y el nombre del proceso al ListBox
+                        listBox3.Items.Add($"ID: {processId} - Name: {processName}");
+                    }
+                    //Anda
+
+                    // Obtener la lista de puertos abiertos
+                    var portsCommand = client.RunCommand("netstat -tuln | grep 'LISTEN'");
+
+                    // Dividir la salida en líneas
+                    var portLines = portsCommand.Result.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
+
+                    // Expresión regular para extraer el puerto
+                    var portRegex = new Regex(@"(?<=:)\d+");
+
+                    // Recorrer cada línea
+                    foreach (var line in portLines)
+                    {
+                        // Obtener el puerto utilizando la expresión regular
+                        var match = portRegex.Match(line);
+                        if (match.Success)
+                        {
+                            var portNumber = match.Value;
+
+                            // Agregar el puerto al ListBox
+                            listBox4.Items.Add(portNumber);
+                        }
+                    }
+
+                    //ANDA3
+                    // Comprobar si MySQL está instalado
+                    var mysqlCommand = client.RunCommand("systemctl is-active mysql");
+
+                    // Comprobar si MariaDB está instalado
+                    var mariadbCommand = client.RunCommand("systemctl is-active mariadb");
+
+                    // Obtener la lista de servicios instalados
+                    var servicesCommand = client.RunCommand("systemctl list-unit-files --type=service --state=enabled --no-pager");
+
+                    // Dividir la salida en líneas
+                    var serviceLines = servicesCommand.Result.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
+
+                    // Recorrer cada línea a partir de la segunda (ignorar la primera línea de encabezado)
+                    for (int i = 1; i < serviceLines.Length; i++)
+                    {
+                        // Obtener el nombre del servicio (el primer campo de cada línea)
+                        var service = serviceLines[i].Split(' ')[0];
+
+                        // Agregar el servicio al ListBox
+                        listBox5.Items.Add(service);
+                    }
+
+                    // Agregar MySQL si está instalado
+                    if (mysqlCommand.ExitStatus == 0)
+                    {
+                        listBox5.Items.Add("mysql");
+                    }
+
+                    // Agregar MariaDB si está instalado
+                    if (mariadbCommand.ExitStatus == 0)
+                    {
+                        listBox5.Items.Add("mariadb");
+                    }
+                    //ANDA4
+                    // Obtener la lista de paquetes instalados
+                    var packagesCommand = client.RunCommand("dpkg --get-selections");
+
+                    // Dividir la salida en líneas
+                    var packageLines = packagesCommand.Result.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
+
+                    // Recorrer cada línea
+                    foreach (var packageLine in packageLines)
+                    {
+                        // Obtener el nombre del paquete
+                        var packageName = packageLine.Split('\t')[0];
+
+                        // Agregar el paquete al ListBox
+                        listBox6.Items.Add(packageName);
+                    }
+                    
+
+                    // Obtener la información de los usuarios conectados
+                    var wCommand = client.RunCommand("w");
+
+                    // Dividir la salida en líneas
+                    var userLines = wCommand.Result.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
+
+                    // Recorrer cada línea a partir de la segunda línea (la primera contiene encabezados)
+                    for (int i = 2; i < userLines.Length; i++)
+                    {
+                        var line = userLines[i];
+
+                        // Dividir la línea en palabras separadas por espacios en blanco
+                        var words = line.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+
+                        // Obtener el nombre de usuario, terminal de inicio de sesión, origen y tiempo de inicio de sesión
+                        string user = words[0];
+                        string tty = words[1];
+                        string from = words[2];
+                        string login = words[3] + " " + words[4] + " " + words[5];
+
+                        // Agregar la información al ListBox
+                        listBox7.Items.Add(user + " " + tty + " " + from + " " + login);
+                    }
+
+
+
+                    
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Error al conectarse al servidor SSH: " + ex.Message);
+                }
+                finally
+                {
+                    client.Disconnect();
+                }
+            }
+        }
