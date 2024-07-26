@@ -1,0 +1,569 @@
+ private void button1_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                string host = textBoxHost.Text;
+                int port = Convert.ToInt32(textBoxPort.Text);
+                string username = textBoxUser.Text;
+                string password = textBoxPassword.Text;
+
+                sshClient = new SshClient(host, port, username, password);
+                sshClient.Connect();
+
+                currentRemoteDirectory = sshClient.RunCommand("echo $HOME").Result.Trim(); // Establecer el directorio actual como el directorio raíz
+
+                RefreshRemoteDirectory();
+                RefreshLocalDirectory();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Ocurrió un error al conectar al servidor SSH: " + ex.Message);
+            }
+        }
+
+        //REMOTO
+        private void RefreshRemoteDirectory()
+        {
+            var files = sshClient.RunCommand($"ls -p {currentRemoteDirectory}").Result.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+            listBoxRemote.Items.Clear();
+            listBoxRemote.Items.Add(".."); // Directorio anterior
+            listBoxRemote.Items.AddRange(files);
+
+            // Agregar evento de doble clic al ListBox remoto
+            listBoxRemote.DoubleClick += ListBoxRemote_DoubleClick;
+        }
+
+
+
+        private void ListBoxRemote_DoubleClick(object sender, EventArgs e)
+        {
+            var selectedItem = listBoxRemote.SelectedItem as string;
+            if (selectedItem == "..")
+            {
+                // Navegar al directorio anterior
+                if (currentRemoteDirectory != "/") // Verificar que no sea el directorio raíz
+                {
+                    string parentDirectory = currentRemoteDirectory.Substring(0, currentRemoteDirectory.LastIndexOf('/'));
+                    if (parentDirectory == "") // Directorio raíz
+                    {
+                        parentDirectory = "/";
+                    }
+                    ChangeRemoteDirectory(parentDirectory);
+                }
+            }
+            else if (selectedItem != null)
+            {
+                // Navegar a la carpeta seleccionada
+                string newDirectory = currentRemoteDirectory + "/" + selectedItem;
+                ChangeRemoteDirectory(newDirectory);
+            }
+        }
+
+
+
+
+
+        private void ChangeRemoteDirectory(string directory)
+        {
+            currentRemoteDirectory = directory; // Actualizar el directorio actual
+            var files = sshClient.RunCommand($"ls -p {directory}").Result.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+            listBoxRemote.Items.Clear();
+            listBoxRemote.Items.Add(".."); // Directorio anterior
+            listBoxRemote.Items.AddRange(files);
+            listBoxRemote.DoubleClick += ListBoxRemote_DoubleClick;
+        }
+
+
+
+        //REMOTO F
+
+
+
+
+        //LOCAL
+        private void RefreshLocalDirectory()
+        {
+            string localDocumentsDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+            var entries = Directory.GetFileSystemEntries(localDocumentsDirectory); // Obtener tanto archivos como carpetas
+            listBoxLocal.Items.Clear();
+            listBoxLocal.Items.Add(".."); // Directorio principal
+            listBoxLocal.Items.AddRange(entries);
+
+            // Agregar evento de clic al ListBox local
+            listBoxLocal.DoubleClick += ListBoxLocal_DoubleClick;
+        }
+
+        private void ListBoxLocal_DoubleClick(object sender, EventArgs e)
+        {
+            var selectedItem = listBoxLocal.SelectedItem as string;
+            if (selectedItem == "..")
+            {
+                // Navegar al directorio padre
+                string currentDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+                string parentDirectory = Directory.GetParent(currentDirectory)?.FullName;
+                if (!string.IsNullOrEmpty(parentDirectory))
+                {
+                    ChangeLocalDirectory(parentDirectory);
+                }
+            }
+            else if (selectedItem != null)
+            {
+                // Navegar a la carpeta seleccionada
+                string currentDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+                string newDirectory = Path.Combine(currentDirectory, selectedItem);
+                if (Directory.Exists(newDirectory))
+                {
+                    ChangeLocalDirectory(newDirectory);
+                }
+                else
+                {
+                    // Mostrar mensaje de error si no es una carpeta válida
+                    MessageBox.Show("Seleccionaste un archivo en lugar de una carpeta.");
+                }
+            }
+        }
+
+        private void ChangeLocalDirectory(string directory)
+        {
+            var entries = new List<string>();
+            entries.Add(".."); // Directorio padre
+            try
+            {
+                entries.AddRange(Directory.GetDirectories(directory));
+                entries.AddRange(Directory.GetFiles(directory)); // Agregar archivos al ListBox
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Manejar error de acceso denegado
+                MessageBox.Show($"Acceso denegado a la ruta de acceso '{directory}'.");
+            }
+            catch (IOException)
+            {
+                // Manejar error de nombre de directorio no válido
+                MessageBox.Show("El nombre del directorio no es válido.");
+            }
+
+            listBoxLocal.Items.Clear();
+            listBoxLocal.Items.AddRange(entries.ToArray());
+            listBoxLocal.DoubleClick += ListBoxLocal_DoubleClick;
+        }
+
+
+
+        //LOCAL
+
+
+        //TRANSFER LOCAL -> SERVER
+
+        private void button2_Click(object sender, EventArgs e)
+        {
+            var selectedItem = listBoxLocal.SelectedItem as string;
+            if (selectedItem != null)
+            {
+                string sourcePath = selectedItem;
+                string destinationPath = currentRemoteDirectory + "/" + Path.GetFileName(selectedItem);
+
+                if (File.Exists(sourcePath))
+                {
+                    // Transferir archivo al servidor remoto
+                    TransferFile(sourcePath, destinationPath);
+                }
+                else if (Directory.Exists(sourcePath))
+                {
+                    // Transferir carpeta al servidor remoto
+                    TransferDirectory(sourcePath, destinationPath);
+                }
+                else
+                {
+                    // Mostrar mensaje de error si no se seleccionó un archivo o carpeta válido
+                    MessageBox.Show("Selecciona un archivo o carpeta válida del listBoxLocal.");
+                }
+            }
+        }
+
+
+
+
+
+        private void TransferFile(string sourcePath, string destinationPath)
+        {
+            using (var sftp = new SftpClient(sshClient.ConnectionInfo))
+            {
+                sftp.Connect();
+
+                using (var fileStream = File.OpenRead(sourcePath))
+                {
+                    sftp.UploadFile(fileStream, destinationPath);
+                }
+
+                sftp.Disconnect();
+
+                // Mostrar mensaje y actualizar listBoxRemote
+                MessageBox.Show("Complete Transfer: File in Documents (Windows) OR /home/$your_user (Linux)");
+                RefreshRemoteDirectory();
+            }
+        }
+
+        private void TransferDirectory(string sourcePath, string destinationPath)
+        {
+            using (var sftp = new SftpClient(sshClient.ConnectionInfo))
+            {
+                sftp.Connect();
+                sftp.CreateDirectory(destinationPath);
+
+                var files = Directory.GetFiles(sourcePath);
+                foreach (var file in files)
+                {
+                    string fileName = Path.GetFileName(file);
+                    string remoteFilePath = destinationPath + "/" + fileName;
+
+                    using (var fileStream = File.OpenRead(file))
+                    {
+                        sftp.UploadFile(fileStream, remoteFilePath);
+                    }
+                }
+
+                var directories = Directory.GetDirectories(sourcePath);
+                foreach (var directory in directories)
+                {
+                    string directoryName = Path.GetFileName(directory);
+                    string remoteDirectoryPath = destinationPath + "/" + directoryName;
+
+                    TransferDirectory(directory, remoteDirectoryPath);
+                }
+
+                sftp.Disconnect();
+
+                // Mostrar mensaje y actualizar listBoxRemote
+                MessageBox.Show("Complete Transfer: File in Documents (Windows) OR /home/$your_user (Linux)");
+                RefreshRemoteDirectory();
+            }
+        }
+
+
+
+        //TRANSFER LOCAL -> SERVER
+
+        //REFRESH
+
+
+        private void button4_Click(object sender, EventArgs e)
+        {
+            RefreshRemoteDirectory();
+            RefreshLocalDirectory();
+        }
+
+        //REFRESH
+
+
+
+        //Transferencia SERVER - LOCAL
+
+        private void button3_Click(object sender, EventArgs e)
+        {
+            var selectedItem = listBoxRemote.SelectedItem as string;
+            if (selectedItem != null && selectedItem != "..")
+            {
+                string sourcePath = currentRemoteDirectory + "/" + selectedItem;
+                string destinationPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), selectedItem);
+
+                if (sshClient.IsConnected)
+                {
+                    using (var sftp = new SftpClient(sshClient.ConnectionInfo))
+                    {
+                        sftp.Connect();
+
+                        if (IsDirectory(sourcePath))
+                        {
+                            // Transferir carpeta desde el servidor remoto al directorio local
+                            TransferDirectory2(sourcePath, destinationPath, sftp);
+                        }
+                        else
+                        {
+                            // Transferir archivo desde el servidor remoto al directorio local
+                            TransferFile2(sourcePath, destinationPath, sftp);
+                        }
+
+                        sftp.Disconnect();
+
+                        // Mostrar mensaje y actualizar listBoxLocal
+                        MessageBox.Show("Complete Transfer: File in Documents (Windows) OR /home/$your_user (Linux)");
+                        RefreshLocalDirectory();
+                    }
+                }
+                else
+                {
+                    MessageBox.Show("No se ha establecido una conexión SSH con el servidor remoto.");
+                }
+            }
+            else
+            {
+                MessageBox.Show("Selecciona un archivo o carpeta válida del listBoxRemote.");
+            }
+        }
+
+        private bool IsDirectory(string path)
+        {
+            var entry = sshClient.RunCommand($"stat -c %F {path}").Result;
+            return entry.Trim() == "directory";
+        }
+
+
+
+        private void TransferFile2(string sourcePath, string destinationPath, SftpClient sftp)
+        {
+            string destinationDirectory = Path.GetDirectoryName(destinationPath);
+            if (!Directory.Exists(destinationDirectory))
+            {
+                Directory.CreateDirectory(destinationDirectory);
+            }
+
+            if (sftp.Exists(sourcePath) && sftp.GetAttributes(sourcePath).IsDirectory)
+            {
+                // Si el origen es una carpeta, se crea una carpeta en el destino y se descargan los archivos
+                string directoryName = Path.GetFileName(sourcePath);
+                string destinationFolderPath = Path.Combine(destinationDirectory, directoryName);
+                Directory.CreateDirectory(destinationFolderPath);
+
+                var files = sftp.ListDirectory(sourcePath);
+                foreach (var file in files)
+                {
+                    if (!file.IsDirectory)
+                    {
+                        string fileName = file.Name;
+                        string sourceFilePath = Path.Combine(sourcePath, fileName);
+                        string destinationFilePath = Path.Combine(destinationFolderPath, fileName);
+
+                        using (var fileStream = File.OpenWrite(destinationFilePath))
+                        {
+                            sftp.DownloadFile(sourceFilePath, fileStream);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                // Si el origen es un archivo, se descarga directamente en el destino
+                using (var fileStream = File.OpenWrite(destinationPath))
+                {
+                    sftp.DownloadFile(sourcePath, fileStream);
+                }
+            }
+        }
+
+
+
+        private void TransferDirectory2(string sourcePath, string destinationPath, SftpClient sftp)
+        {
+            if (!Directory.Exists(destinationPath))
+            {
+                Directory.CreateDirectory(destinationPath);
+            }
+
+            var files = sftp.ListDirectory(sourcePath);
+            foreach (var file in files)
+            {
+                if (!file.IsDirectory)
+                {
+                    string fileName = file.Name;
+                    string remoteFilePath = Path.Combine(sourcePath, fileName);
+                    string localFilePath = Path.Combine(destinationPath, fileName);
+
+                    TransferFile2(remoteFilePath, localFilePath, sftp);
+                }
+                else if (!IsParentDirectory(file.Name))
+                {
+                    string directoryName = file.Name;
+                    string remoteDirectoryPath = Path.Combine(sourcePath, directoryName);
+                    string localDirectoryPath = Path.Combine(destinationPath, directoryName);
+
+                    TransferDirectory2(remoteDirectoryPath, localDirectoryPath, sftp);
+                }
+            }
+        }
+
+        private bool IsParentDirectory(string directoryName)
+        {
+            return directoryName == "." || directoryName == "..";
+        }
+
+ //editar,leer archivo de texto
+ private void button5_Click(object sender, EventArgs e)
+        {
+            var selectedItem = listBoxRemote.SelectedItem as string;
+            if (selectedItem != null && !selectedItem.EndsWith("/"))
+            {
+                // Verificar que el elemento seleccionado no sea un directorio
+
+                // Obtener la ruta completa del archivo seleccionado
+                string filePath = currentRemoteDirectory + "/" + selectedItem;
+
+                // Leer el contenido del archivo
+                var fileContent = sshClient.RunCommand($"cat {filePath}").Result;
+
+                // Crear un formulario o ventana para mostrar el contenido del archivo
+                var editForm = new Form();
+                editForm.Icon = this.Icon;
+                var richTextBox = new RichTextBox();
+                richTextBox.Multiline = true;
+                richTextBox.Dock = DockStyle.Fill;
+                richTextBox.Text = fileContent;
+
+                // Agregar el control RichTextBox al formulario
+                editForm.Controls.Add(richTextBox);
+
+                // Agregar un menú de barra
+                var menuStrip = new MenuStrip();
+                var searchMenu = new ToolStripMenuItem("Search");
+
+                // Agregar un cuadro de texto al menú
+                var searchTextBox = new ToolStripTextBox();
+                searchTextBox.AutoSize = false;
+                searchTextBox.Width = 150;
+
+                // Evento de búsqueda al presionar Enter en el cuadro de texto
+                searchTextBox.KeyDown += (s, ev) =>
+                {
+                    if (ev.KeyCode == Keys.Enter)
+                    {
+                        string searchTerm = searchTextBox.Text;
+                        if (!string.IsNullOrEmpty(searchTerm))
+                        {
+                            int index = richTextBox.Text.IndexOf(searchTerm);
+                            if (index != -1)
+                            {
+                                richTextBox.SelectionStart = index;
+                                richTextBox.SelectionLength = searchTerm.Length;
+                                richTextBox.ScrollToCaret();
+                                richTextBox.Focus();
+                            }
+                            else
+                            {
+                                MessageBox.Show($"La palabra '{searchTerm}' no se encontró en el texto.", "Buscar", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                            }
+                        }
+                    }
+                };
+
+                // Agregar el cuadro de texto al menú
+                searchMenu.DropDownItems.Add(searchTextBox);
+
+                // Agregar el menú al menú de barra
+                menuStrip.Items.Add(searchMenu);
+
+                // Asignar el menú de barra al formulario
+                editForm.Controls.Add(menuStrip);
+
+
+                // Declarar una variable para almacenar la lista de posiciones de coincidencia
+                List<int> searchPositions = new List<int>();
+
+                // Declarar una variable para almacenar la posición actual de la coincidencia
+                int currentPosition = -1;
+
+                // Evento de teclado para buscar la siguiente coincidencia al presionar Enter
+                searchTextBox.KeyDown += (s, ev) =>
+                {
+                    if (ev.KeyCode == Keys.Enter)
+                    {
+                        if (searchPositions.Count > 0)
+                        {
+                            // Incrementar la posición actual para avanzar a la siguiente coincidencia
+                            currentPosition++;
+                            if (currentPosition >= searchPositions.Count)
+                            {
+                                // Si alcanzamos el final de la lista, volver al inicio
+                                currentPosition = 0;
+                            }
+
+                            // Seleccionar la siguiente coincidencia y ajustar el enfoque
+                            richTextBox.SelectionStart = searchPositions[currentPosition];
+                            richTextBox.SelectionLength = searchTextBox.Text.Length;
+                            richTextBox.ScrollToCaret();
+                            richTextBox.Focus();
+
+                            // Evitar que el evento KeyDown propague y active otras acciones relacionadas con Enter
+                            ev.Handled = true;
+                        }
+                    }
+                };
+
+                // Evento de texto cambiado para realizar la búsqueda al ingresar texto en el cuadro de búsqueda
+                searchTextBox.TextChanged += (s, ev) =>
+                {
+                    // Limpiar la lista de posiciones de coincidencia y restablecer la posición actual
+                    searchPositions.Clear();
+                    currentPosition = -1;
+
+                    // Obtener el texto de búsqueda
+                    string searchText = searchTextBox.Text;
+
+                    // Realizar la búsqueda en el contenido del archivo
+                    int index = 0;
+                    while (index < richTextBox.TextLength)
+                    {
+                        index = richTextBox.Find(searchText, index, RichTextBoxFinds.None);
+                        if (index == -1)
+                            break;
+
+                        searchPositions.Add(index);
+                        index += searchText.Length;
+                    }
+                };
+
+
+
+
+
+                // Agregar un botón "Guardar" al formulario
+                var saveButton = new Button();
+                saveButton.Text = "Save";
+                saveButton.Dock = DockStyle.Bottom;
+                saveButton.Click += (s, ev) =>
+                {
+                    // Guardar los cambios realizados en el archivo
+
+                    // Obtener el contenido modificado del control RichTextBox
+                    string modifiedContent = richTextBox.Text;
+
+                    try
+                    {
+                        // Crear una instancia de SftpClient
+                        var sftpClient = new SftpClient(sshClient.ConnectionInfo);
+
+                        // Conectar al servidor SFTP
+                        sftpClient.Connect();
+
+                        // Crear un MemoryStream a partir del contenido modificado
+                        var modifiedStream = new MemoryStream(Encoding.UTF8.GetBytes(modifiedContent));
+
+                        // Subir el archivo modificado al servidor remoto
+                        sftpClient.UploadFile(modifiedStream, filePath);
+
+                        // Cerrar la conexión SFTP
+                        sftpClient.Disconnect();
+
+                        // Mostrar un mensaje de éxito
+                        MessageBox.Show("Archivo guardado correctamente.", "Guardar archivo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+                        // Cerrar el formulario después de guardar
+                        editForm.Close();
+
+                        // Actualizar el contenido del ListBox remoto
+                        RefreshRemoteDirectory();
+                    }
+                    catch (Exception ex)
+                    {
+                        // Mostrar un mensaje de error
+                        MessageBox.Show($"Error al guardar el archivo: {ex.Message}", "Guardar archivo", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                };
+
+                // Agregar el botón "Guardar" al formulario
+                editForm.Controls.Add(saveButton);
+
+                // Mostrar el formulario y esperar a que se cierre
+                editForm.ShowDialog();
+            }
+
+        }
