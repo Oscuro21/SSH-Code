@@ -1,2 +1,2 @@
 # SSH-Code
-SSH en C#
+SSH client en C#
