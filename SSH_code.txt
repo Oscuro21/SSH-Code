@@ -1,0 +1,186 @@
+ // Verificar si los TextBox están vacíos
+            if (textBoxHost.Text == "" || textBoxUser.Text == "" || textBoxPassword.Text == "" || textBoxPort.Text == "")
+            {
+                // Mostrar un mensaje de error
+                MessageBox.Show("Por favor, complete todos los campos.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+
+            else
+            {
+
+                int port;
+                if (!int.TryParse(textBoxPort.Text, out port))
+                {
+                    MessageBox.Show("El puerto debe ser un número entero.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+                // Si todos los TextBox están llenos, hacer lo que sea necesario
+                // ...
+
+
+
+                // Obtener los valores del formulario
+                string usuario = textBoxUser.Text;
+                string contrasena = textBoxPassword.Text;
+                string host = textBoxHost.Text;
+                int puerto = int.Parse(textBoxPort.Text);
+
+
+                //agrego try para capturar error
+                try
+                {
+
+                    // Crear la conexión SSH
+                    _client = new SshClient(host, puerto, usuario, contrasena);
+                    _client.Connect();
+                }
+                catch (Exception ex)
+                {
+                    // Mostrar un mensaje de error
+                    MessageBox.Show("Error al conectar: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+
+                // Crear un canal SSH de tipo shell
+                var shellStream = _client.CreateShellStream("terminal", 80, 24, 800, 600, 1024);
+
+                // Crear un lector y un escritor para el canal SSH
+                _reader = new StreamReader(shellStream);
+                _writer = new StreamWriter(shellStream);
+
+                // Crear un nuevo formulario para la terminal interactiva
+                var terminalForm = new Form();
+                terminalForm.Text = "Terminal SSH";
+                terminalForm.StartPosition = FormStartPosition.CenterScreen;
+                terminalForm.Size = new System.Drawing.Size(800, 600);
+                terminalForm.Icon = this.Icon;
+
+
+                // Crear un RichTextBox para mostrar la salida de la terminal
+                var outputBox = new RichTextBox();
+                outputBox.Dock = DockStyle.Fill;
+                outputBox.ReadOnly = true;
+                terminalForm.Controls.Add(outputBox);
+
+
+                // Crear un botón para personalizar la terminal
+                var colorButton = new Button();
+                colorButton.Dock = DockStyle.Right;
+                colorButton.Text = "Personalizar";
+                colorButton.Click += (sender2, e2) =>
+                {
+                    if (_colorDialog.ShowDialog() == DialogResult.OK)
+                    {
+                        outputBox.BackColor = _colorDialog.Color;
+                    }
+                };
+                terminalForm.Controls.Add(colorButton);
+
+
+
+                // Crear un botón para enviar la señal de cancelación al servidor
+                var cancelBtn = new Button();
+                cancelBtn.Dock = DockStyle.Right;
+                cancelBtn.Text = "Control+C";
+                cancelBtn.Click += (sender2, e2) =>
+                {
+                    // Enviar la señal de cancelación al servidor
+                    _writer.Write((char)3);
+                    _writer.Flush();
+                };
+                terminalForm.Controls.Add(cancelBtn);
+
+
+
+
+                // Crear un TextBox para enviar comandos al servidor
+                var inputBox = new TextBox();
+                inputBox.Dock = DockStyle.Bottom;
+                inputBox.KeyPress += (sender2, e2) =>
+                {
+                    if (e2.KeyChar == (char)Keys.Enter)
+                    {
+                        e2.Handled = true;
+
+                        // Enviar el comando al servidor
+                        var command = inputBox.Text;
+                        _writer.Write(command + "\n"); // <-- Aquí se cambia WriteLine por Write y se agrega un salto de línea
+                        _writer.Flush();
+
+                        // Limpiar el cuadro de entrada
+                        inputBox.Text = "";
+                    }
+                };
+                terminalForm.Controls.Add(inputBox);
+
+                // Mostrar el formulario de la terminal
+                terminalForm.Show();
+
+                // Ocultar el formulario actual
+                this.Hide();
+
+
+                // Cerrar el formulario anterior en el evento de cierre del formulario de la terminal
+                terminalForm.FormClosing += (sender2, e2) =>
+                {
+                    this.Close();
+                };
+
+
+
+                // Iniciar un hilo para leer la salida del servidor
+                var thread = new Thread(() =>
+                {
+                    while (_reader != null && _reader.BaseStream != null && _reader.BaseStream.CanRead)
+                    {
+                        string line;
+                        while ((line = _reader.ReadLine()) != null)
+                        {
+                            // Comprobar si se está ejecutando en el hilo de la interfaz de usuario
+                            if (outputBox.InvokeRequired)
+                            {
+                                outputBox.Invoke((Action)delegate
+                                {
+                                    outputBox.AppendText(line + "\n");
+                                });
+                            }
+                        }
+                    }
+                });
+                thread.IsBackground = true;
+                thread.Start();
+                inputBox.Focus();
+            }
+
+
+
+            //aca cierra mi else
+
+
+            if (checkBox1.Checked)
+            {
+                Properties.Settings.Default.us = textBoxUser.Text;
+                Properties.Settings.Default.ser = textBoxHost.Text;
+                Properties.Settings.Default.pue = textBoxPort.Text;
+                Properties.Settings.Default.recor = true;
+            }
+            else
+            {
+                Properties.Settings.Default.us = "";
+                Properties.Settings.Default.ser = "";
+                Properties.Settings.Default.pue = "";
+                Properties.Settings.Default.recor = false;
+            }
+
+            Properties.Settings.Default.passrecor = checkBox2.Checked;
+            if (checkBox2.Checked)
+            {
+                Properties.Settings.Default.pass = textBoxPassword.Text;
+            }
+            else
+            {
+                Properties.Settings.Default.pass = "";
+            }
+
+            Properties.Settings.Default.Save();
+            Properties.Settings.Default.Reload();
